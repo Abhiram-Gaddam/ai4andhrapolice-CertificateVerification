@@ -28,7 +28,7 @@ export default function AnalyticsDashboard() {
   const [scanLogs, setScanLogs] = useState<ScanLog[]>([])
   const [dailyStats, setDailyStats] = useState<DailyStats[]>([])
   const [loading, setLoading] = useState(true)
-
+  
   useEffect(() => {
     fetchAnalytics()
   }, [])

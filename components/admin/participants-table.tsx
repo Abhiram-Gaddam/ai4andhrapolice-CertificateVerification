@@ -8,11 +8,31 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Search, Eye, Plus, FileText, QrCode, Trash2, Users, DownloadCloud } from "lucide-react"
+import {
+  Search,
+  Eye,
+  Plus,
+  FileText,
+  QrCode,
+  Trash2,
+  Users,
+  DownloadCloud,
+  AlertTriangle,
+  Download,
+} from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import AddParticipantForm from "./add-participant-form"
 import { generateCertificatePDF, downloadPDF } from "@/lib/pdf-generator"
+import { generateHighResQRCode, getVerificationURL } from "@/lib/qr-generator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import JSZip from "jszip"
 
 interface Participant {
@@ -39,6 +59,8 @@ interface Template {
   template_height: number
 }
 
+const STATIC_PASSWORD = "admin@123" // Define static password
+
 export default function ParticipantsTable() {
   const [participants, setParticipants] = useState<Participant[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
@@ -49,13 +71,31 @@ export default function ParticipantsTable() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [generating, setGenerating] = useState<string | null>(null)
   const [bulkGenerating, setBulkGenerating] = useState(false)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [downloadingQR, setDownloadingQR] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [passwordInput, setPasswordInput] = useState("")
+  const [loginError, setLoginError] = useState("")
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (passwordInput === STATIC_PASSWORD) {
+      setIsAuthenticated(true)
+      setLoginError("")
+    } else {
+      setLoginError("Incorrect password")
+      setPasswordInput("")
+    }
+  }
 
   useEffect(() => {
-    fetchParticipants()
-    fetchTemplates()
-  }, [])
+    if (isAuthenticated) {
+      fetchParticipants()
+      fetchTemplates()
+    }
+  }, [isAuthenticated])
 
   const fetchParticipants = async () => {
     try {
@@ -94,7 +134,6 @@ export default function ParticipantsTable() {
       if (error) throw error
       setTemplates(data || [])
 
-      // Auto-select the first template
       if (data && data.length > 0) {
         setSelectedTemplate(data[0].id)
       }
@@ -115,8 +154,129 @@ export default function ParticipantsTable() {
     return matchesSearch && matchesRole
   })
 
-  const handleViewCertificate = (verificationId: string) => {
-    window.open(`/verify/${verificationId}`, "_blank")
+  const handleViewInvitation = (verificationId: string) => {
+    const verificationUrl = `https://ai4andhrapolice-certificate-verific.vercel.app/verify/${verificationId}`
+    window.open(verificationUrl, "_blank")
+  }
+
+  const handleViewQR = async (participant: Participant) => {
+    try {
+      const verificationURL = getVerificationURL(participant.verification_id)
+      const qrCodeDataURL = await generateHighResQRCode(verificationURL, 400)
+
+      const newWindow = window.open("", "_blank", "width=500,height=600")
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>QR Code - ${participant.name}</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  text-align: center; 
+                  padding: 20px; 
+                  background: #f5f5f5;
+                }
+                .container {
+                  background: white;
+                  padding: 30px;
+                  border-radius: 10px;
+                  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                  max-width: 400px;
+                  margin: 0 auto;
+                }
+                .qr-code { 
+                  margin: 20px 0; 
+                  border: 1px solid #ddd;
+                  border-radius: 8px;
+                  padding: 10px;
+                  background: white;
+                }
+                .participant-info {
+                  margin-bottom: 20px;
+                  padding: 15px;
+                  background: #f8f9fa;
+                  border-radius: 8px;
+                }
+                .verification-id {
+                  font-family: monospace;
+                  background: #e9ecef;
+                  padding: 5px 10px;
+                  border-radius: 4px;
+                  font-size: 12px;
+                }
+                .download-btn {
+                  background: #007bff;
+                  color: white;
+                  border: none;
+                  padding: 10px 20px;
+                  border-radius: 5px;
+                  cursor: pointer;
+                  margin: 5px;
+                }
+                .download-btn:hover {
+                  background: #0056b3;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <h2>QR Code for Certificate Verification</h2>
+                <div class="participant-info">
+                  <h3>${participant.name}</h3>
+                  <p><strong>Role:</strong> ${participant.role}</p>
+                  <p><strong>College:</strong> ${participant.college || "N/A"}</p>
+                  <p class="verification-id">ID: ${participant.verification_id}</p>
+                </div>
+                <div class="qr-code">
+                  <img src="${qrCodeDataURL}" alt="QR Code" style="max-width: 100%; height: auto;" />
+                </div>
+                <p style="font-size: 12px; color: #666; margin-top: 15px;">
+                  Scan this QR code to verify the certificate
+                </p>
+                <button class="download-btn" onclick="downloadQR()">Download QR Code</button>
+                <button class="download-btn" onclick="window.print()">Print QR Code</button>
+              </div>
+              <script>
+                function downloadQR() {
+                  const link = document.createElement('a');
+                  link.download = 'qr-code-${participant.verification_id}.png';
+                  link.href = '${qrCodeDataURL}';
+                  link.click();
+                }
+              </script>
+            </body>
+          </html>
+        `)
+        newWindow.document.close()
+      }
+    } catch (error) {
+      console.error("Error generating QR code:", error)
+      setError("Failed to generate QR code")
+    }
+  }
+
+  const handleDownloadQR = async (participant: Participant) => {
+    setDownloadingQR(participant.id)
+    try {
+      const verificationURL = getVerificationURL(participant.verification_id)
+      const qrCodeDataURL = await generateHighResQRCode(verificationURL, 600)
+
+      const link = document.createElement("a")
+      link.download = `qr-code-${participant.verification_id}-${participant.name.replace(/[^a-zA-Z0-9]/g, "_")}.png`
+      link.href = qrCodeDataURL
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      setSuccess(`QR code downloaded for ${participant.name}`)
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (error) {
+      console.error("Error downloading QR code:", error)
+      setError("Failed to download QR code")
+    } finally {
+      setDownloadingQR(null)
+    }
   }
 
   const getSelectedTemplate = (): Template | null => {
@@ -124,7 +284,7 @@ export default function ParticipantsTable() {
     return templates.find((t) => t.id === selectedTemplate) || templates[0] || null
   }
 
-  const handleGenerateCertificate = async (participant: Participant) => {
+  const handleDownloadInvitation = async (participant: Participant) => {
     const template = getSelectedTemplate()
 
     if (!template) {
@@ -136,28 +296,22 @@ export default function ParticipantsTable() {
     setError("")
 
     try {
-      console.log("Using template:", template.name)
-      console.log("Template positions:", {
-        name: template.name_position,
-        qr: template.qr_position,
-        size: { width: template.template_width, height: template.template_height },
-      })
-
+      console.log("Generating invitation certificate for:", participant.name)
       const pdfBlob = await generateCertificatePDF(participant, template)
 
-      // Download the certificate
-      downloadPDF(pdfBlob, `certificate-${participant.verification_id}.pdf`)
+      downloadPDF(
+        pdfBlob,
+        `invitation-${participant.verification_id}-${participant.name.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
+      )
 
-      // Update participant record
       await supabase
         .from("participants")
         .update({
-          certificate_url: `certificate-${participant.verification_id}.pdf`,
+          certificate_url: `invitation-${participant.verification_id}.pdf`,
           certificate_generated_at: new Date().toISOString(),
         })
         .eq("id", participant.id)
 
-      // Log the certificate generation
       await supabase.from("certificate_logs").insert({
         participant_id: participant.id,
         template_id: template.id,
@@ -165,12 +319,12 @@ export default function ParticipantsTable() {
         status: "completed",
       })
 
-      setSuccess(`Certificate generated for ${participant.name} using template "${template.name}"`)
+      setSuccess(`Invitation downloaded for ${participant.name}`)
       setTimeout(() => setSuccess(""), 3000)
       fetchParticipants()
     } catch (err: any) {
-      console.error("Certificate generation error:", err)
-      setError(err.message || "Error generating certificate")
+      console.error("Invitation generation error:", err)
+      setError(err.message || "Error generating invitation")
     } finally {
       setGenerating(null)
     }
@@ -185,7 +339,7 @@ export default function ParticipantsTable() {
     }
 
     if (filteredParticipants.length === 0) {
-      setError("No participants to generate certificates for.")
+      setError("No participants to generate invitations for.")
       return
     }
 
@@ -197,32 +351,29 @@ export default function ParticipantsTable() {
       let successCount = 0
       let errorCount = 0
 
-      setSuccess(`Generating ${filteredParticipants.length} certificates using template "${template.name}"...`)
+      setSuccess(`Generating ${filteredParticipants.length} invitations using template "${template.name}"...`)
 
       for (let i = 0; i < filteredParticipants.length; i++) {
         const participant = filteredParticipants[i]
 
         try {
-          console.log(`Generating certificate ${i + 1}/${filteredParticipants.length} for ${participant.name}`)
+          console.log(`Generating invitation ${i + 1}/${filteredParticipants.length} for ${participant.name}`)
 
           const pdfBlob = await generateCertificatePDF(participant, template)
 
-          // Add to ZIP file
           zip.file(
-            `certificate-${participant.verification_id}-${participant.name.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
+            `invitation-${participant.verification_id}-${participant.name.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
             pdfBlob,
           )
 
-          // Update participant record
           await supabase
             .from("participants")
             .update({
-              certificate_url: `certificate-${participant.verification_id}.pdf`,
+              certificate_url: `invitation-${participant.verification_id}.pdf`,
               certificate_generated_at: new Date().toISOString(),
             })
             .eq("id", participant.id)
 
-          // Log the certificate generation
           await supabase.from("certificate_logs").insert({
             participant_id: participant.id,
             template_id: template.id,
@@ -231,28 +382,25 @@ export default function ParticipantsTable() {
           })
 
           successCount++
-
-          // Update progress
-          setSuccess(`Generated ${successCount}/${filteredParticipants.length} certificates...`)
+          setSuccess(`Generated ${successCount}/${filteredParticipants.length} invitations...`)
         } catch (err) {
-          console.error(`Error generating certificate for ${participant.name}:`, err)
+          console.error(`Error generating invitation for ${participant.name}:`, err)
           errorCount++
         }
       }
 
-      // Generate and download ZIP file
       const zipBlob = await zip.generateAsync({ type: "blob" })
       const url = URL.createObjectURL(zipBlob)
       const link = document.createElement("a")
       link.href = url
-      link.download = `certificates-${new Date().toISOString().split("T")[0]}.zip`
+      link.download = `invitations-${new Date().toISOString().split("T")[0]}.zip`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
 
       setSuccess(
-        `Bulk download complete! Generated ${successCount} certificates successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ""}`,
+        `Bulk download complete! Generated ${successCount} invitations successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ""}`,
       )
       setTimeout(() => setSuccess(""), 5000)
       fetchParticipants()
@@ -264,19 +412,161 @@ export default function ParticipantsTable() {
     }
   }
 
-  const handleDeleteParticipant = async (participant: Participant) => {
-    if (!confirm(`Are you sure you want to delete ${participant.name}?`)) return
+  const handleBulkDownloadQR = async () => {
+    if (filteredParticipants.length === 0) {
+      setError("No participants to generate QR codes for.")
+      return
+    }
+
+    setBulkGenerating(true)
+    setError("")
 
     try {
-      const { error } = await supabase.from("participants").delete().eq("id", participant.id)
+      const zip = new JSZip()
+      let successCount = 0
 
-      if (error) throw error
+      setSuccess(`Generating ${filteredParticipants.length} QR codes...`)
 
-      setSuccess(`${participant.name} deleted successfully`)
+      for (let i = 0; i < filteredParticipants.length; i++) {
+        const participant = filteredParticipants[i]
+
+        try {
+          const verificationURL = getVerificationURL(participant.verification_id)
+          const qrCodeDataURL = await generateHighResQRCode(verificationURL, 600)
+
+          const response = await fetch(qrCodeDataURL)
+          const blob = await response.blob()
+
+          zip.file(`qr-code-${participant.verification_id}-${participant.name.replace(/[^a-zA-Z0-9]/g, "_")}.png`, blob)
+
+          successCount++
+          setSuccess(`Generated ${successCount}/${filteredParticipants.length} QR codes...`)
+        } catch (err) {
+          console.error(`Error generating QR code for ${participant.name}:`, err)
+        }
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" })
+      const url = URL.createObjectURL(zipBlob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `qr-codes-${new Date().toISOString().split("T")[0]}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      setSuccess(`Bulk QR download complete! Generated ${successCount} QR codes successfully.`)
+      setTimeout(() => setSuccess(""), 5000)
+    } catch (err: any) {
+      console.error("Bulk QR download error:", err)
+      setError(err.message || "Error during bulk QR download")
+    } finally {
+      setBulkGenerating(false)
+    }
+  }
+
+  const handleDeleteParticipant = async (participant: Participant) => {
+    if (
+      !confirm(
+        `Are you sure you want to delete ${participant.name}? This will also delete all related QR scan logs and certificate logs.`,
+      )
+    )
+      return
+
+    setDeleting(participant.id)
+    setError("")
+
+    try {
+      console.log(`Deleting participant ${participant.name} and related records...`)
+
+      const { error: qrLogsError } = await supabase.from("qr_scan_logs").delete().eq("participant_id", participant.id)
+
+      if (qrLogsError) {
+        console.warn("Error deleting QR scan logs:", qrLogsError)
+      }
+
+      const { error: certLogsError } = await supabase
+        .from("certificate_logs")
+        .delete()
+        .eq("participant_id", participant.id)
+
+      if (certLogsError) {
+        console.warn("Error deleting certificate logs:", certLogsError)
+      }
+
+      const { error: participantError } = await supabase.from("participants").delete().eq("id", participant.id)
+
+      if (participantError) {
+        throw participantError
+      }
+
+      setSuccess(`${participant.name} and all related records deleted successfully`)
       setTimeout(() => setSuccess(""), 3000)
       fetchParticipants()
     } catch (err: any) {
-      setError(err.message || "Error deleting participant")
+      console.error("Delete error:", err)
+
+      if (err.message.includes("foreign key constraint")) {
+        setError(
+          `Cannot delete ${participant.name} because there are related records. Please run the database fix script first or contact the administrator.`,
+        )
+      } else {
+        setError(err.message || `Error deleting ${participant.name}`)
+      }
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (filteredParticipants.length === 0) {
+      setError("No participants to delete.")
+      return
+    }
+
+    const confirmMessage = `Are you sure you want to delete all ${filteredParticipants.length} filtered participants? This action cannot be undone and will delete all related QR scan logs and certificate logs.`
+
+    if (!confirm(confirmMessage)) return
+
+    setBulkGenerating(true)
+    setError("")
+
+    try {
+      let successCount = 0
+      let errorCount = 0
+
+      setSuccess(`Deleting ${filteredParticipants.length} participants...`)
+
+      for (let i = 0; i < filteredParticipants.length; i++) {
+        const participant = filteredParticipants[i]
+
+        try {
+          await supabase.from("qr_scan_logs").delete().eq("participant_id", participant.id)
+          await supabase.from("certificate_logs").delete().eq("participant_id", participant.id)
+
+          const { error } = await supabase.from("participants").delete().eq("id", participant.id)
+
+          if (error) throw error
+
+          successCount++
+          setSuccess(`Deleted ${successCount}/${filteredParticipants.length} participants...`)
+        } catch (err) {
+          console.error(`Error deleting ${participant.name}:`, err)
+          errorCount++
+        }
+      }
+
+      setSuccess(
+        `Bulk deletion complete! Deleted ${successCount} participants successfully.${errorCount > 0 ? ` ${errorCount} failed.` : ""}`,
+      )
+      setTimeout(() => setSuccess(""), 5000)
+      fetchParticipants()
+    } catch (err: any) {
+      console.error("Bulk delete error:", err)
+      setError(err.message || "Error during bulk deletion")
+    } finally {
+      setBulkGenerating(false)
     }
   }
 
@@ -286,6 +576,32 @@ export default function ParticipantsTable() {
   }
 
   const uniqueRoles = [...new Set(participants.map((p) => p.role))].filter(Boolean)
+
+  if (!isAuthenticated) {
+    return (
+      <Card className="max-w-md mx-auto mt-10">
+        <CardHeader>
+          <CardTitle>Admin Login</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <Input
+                type="password"
+                placeholder="Enter password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+              />
+              {loginError && (
+                <p className="text-red-500 text-sm mt-1">{loginError}</p>
+              )}
+            </div>
+            <Button type="submit" className="w-full">Login</Button>
+          </form>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (loading) {
     return (
@@ -310,7 +626,7 @@ export default function ParticipantsTable() {
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
           <CardTitle>Participants ({filteredParticipants.length})</CardTitle>
-          <p className="text-sm text-gray-600 mt-1">Manage participant certificates and verification</p>
+          <p className="text-sm text-gray-600 mt-1">Manage participant invitations, QR codes, and verification</p>
         </div>
         <div className="flex space-x-2">
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -328,29 +644,51 @@ export default function ParticipantsTable() {
             </DialogContent>
           </Dialog>
 
-          <Button
-            onClick={handleBulkDownload}
-            disabled={bulkGenerating || filteredParticipants.length === 0}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            {bulkGenerating ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent mr-2"></div>
-                Generating...
-              </>
-            ) : (
-              <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={filteredParticipants.length === 0}>
                 <DownloadCloud className="h-4 w-4 mr-2" />
-                Download All ({filteredParticipants.length})
-              </>
-            )}
-          </Button>
+                Bulk Actions ({filteredParticipants.length})
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Download Actions</DropdownMenuLabel>
+              <DropdownMenuItem onClick={handleBulkDownload} disabled={bulkGenerating}>
+                <FileText className="h-4 w-4 mr-2" />
+                Download All Invitations
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBulkDownloadQR} disabled={bulkGenerating}>
+                <QrCode className="h-4 w-4 mr-2" />
+                Download All QR Codes
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Danger Zone</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={handleBulkDelete}
+                disabled={bulkGenerating}
+                className="text-red-600 focus:text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All ({filteredParticipants.length})
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </CardHeader>
       <CardContent>
         {error && (
           <Alert variant="destructive" className="mb-4">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {error}
+              {error.includes("foreign key constraint") && (
+                <div className="mt-2">
+                  <p className="text-sm">
+                    <strong>Fix:</strong> Run the database fix script to resolve foreign key constraints.
+                  </p>
+                </div>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -360,12 +698,11 @@ export default function ParticipantsTable() {
           </Alert>
         )}
 
-        {/* Template Selection */}
         <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-blue-900">Certificate Template</h3>
-              <p className="text-sm text-blue-700">Select which template to use for certificate generation</p>
+              <p className="text-sm text-blue-700">Select which template to use for invitation generation</p>
             </div>
             <div className="w-64">
               <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
@@ -382,15 +719,6 @@ export default function ParticipantsTable() {
               </Select>
             </div>
           </div>
-          {selectedTemplate && (
-            <div className="mt-2 text-xs text-blue-600">
-              Using: {templates.find((t) => t.id === selectedTemplate)?.name} - Name at (
-              {templates.find((t) => t.id === selectedTemplate)?.name_position.x},{" "}
-              {templates.find((t) => t.id === selectedTemplate)?.name_position.y}), QR at (
-              {templates.find((t) => t.id === selectedTemplate)?.qr_position.x},{" "}
-              {templates.find((t) => t.id === selectedTemplate)?.qr_position.y})
-            </div>
-          )}
         </div>
 
         <div className="flex items-center space-x-4 mb-4">
@@ -429,7 +757,7 @@ export default function ParticipantsTable() {
                 <TableHead>Verification ID</TableHead>
                 <TableHead>Scans</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -450,25 +778,28 @@ export default function ParticipantsTable() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={participant.certificate_url ? "default" : "secondary"}>
-                      {participant.certificate_url ? "Certificate Generated" : "Pending"}
+                      {participant.certificate_url ? "Invitation Generated" : "Pending"}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center space-x-1">
+                    <div className="flex items-center justify-center space-x-1">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleViewCertificate(participant.verification_id)}
-                        title="View verification page"
+                        onClick={() => handleViewInvitation(participant.verification_id)}
+                        title="View invitation page"
+                        className="h-8 w-8 p-0"
                       >
                         <Eye className="h-3 w-3" />
                       </Button>
+
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleGenerateCertificate(participant)}
+                        onClick={() => handleDownloadInvitation(participant)}
                         disabled={generating === participant.id}
-                        title="Generate certificate PDF"
+                        title="Download invitation PDF"
+                        className="h-8 w-8 p-0"
                       >
                         {generating === participant.id ? (
                           <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"></div>
@@ -476,14 +807,45 @@ export default function ParticipantsTable() {
                           <FileText className="h-3 w-3" />
                         )}
                       </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleViewQR(participant)}
+                        title="View QR code"
+                        className="h-8 w-8 p-0"
+                      >
+                        <QrCode className="h-3 w-3" />
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDownloadQR(participant)}
+                        disabled={downloadingQR === participant.id}
+                        title="Download QR code"
+                        className="h-8 w-8 p-0"
+                      >
+                        {downloadingQR === participant.id ? (
+                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600"></div>
+                        ) : (
+                          <Download className="h-3 w-3" />
+                        )}
+                      </Button>
+
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleDeleteParticipant(participant)}
+                        disabled={deleting === participant.id}
                         title="Delete participant"
-                        className="text-red-600 hover:text-red-700"
+                        className="h-8 w-8 p-0 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
                       >
-                        <Trash2 className="h-3 w-3" />
+                        {deleting === participant.id ? (
+                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-red-300 border-t-red-600"></div>
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
                       </Button>
                     </div>
                   </TableCell>

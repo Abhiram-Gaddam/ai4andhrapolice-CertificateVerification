@@ -21,6 +21,36 @@ export default function AddParticipantForm({ onSuccess }: { onSuccess?: () => vo
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
 
+  const generateUniqueVerificationId = async (name: string): Promise<string> => {
+    const timestamp = Date.now()
+    const namePrefix = name
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .substring(0, 3)
+      .toUpperCase()
+    let verificationId = `CERT-${new Date().getFullYear()}-${namePrefix}-${timestamp}`
+
+    // Check if this ID already exists and generate a new one if needed
+    let attempts = 0
+    while (attempts < 5) {
+      const { data } = await supabase
+        .from("participants")
+        .select("verification_id")
+        .eq("verification_id", verificationId)
+        .single()
+
+      if (!data) {
+        // ID is unique
+        break
+      }
+
+      // Generate a new ID
+      attempts++
+      verificationId = `CERT-${new Date().getFullYear()}-${namePrefix}-${timestamp}-${attempts}`
+    }
+
+    return verificationId
+  }
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setLoading(true)
@@ -32,19 +62,30 @@ export default function AddParticipantForm({ onSuccess }: { onSuccess?: () => vo
         throw new Error("Name is required")
       }
 
-      // Generate unique verification ID
-      const timestamp = Date.now()
-      const randomSuffix = Math.random().toString(36).substr(2, 6).toUpperCase()
-      const verificationId = `CERT-${new Date().getFullYear()}-${randomSuffix}`
+      // Check for existing participant by email if provided
+      if (formData.email.trim()) {
+        const { data: existingParticipant } = await supabase
+          .from("participants")
+          .select("id, name, email")
+          .eq("email", formData.email.trim())
+          .single()
 
-      // Insert participant (without event field)
+        if (existingParticipant) {
+          throw new Error(`A participant with email ${formData.email} already exists`)
+        }
+      }
+
+      // Generate unique verification ID
+      const verificationId = await generateUniqueVerificationId(formData.name)
+
+      // Insert participant
       const { data: insertedParticipant, error: insertError } = await supabase
         .from("participants")
         .insert({
           name: formData.name.trim(),
           email: formData.email.trim() || null,
           college: formData.college.trim() || null,
-          role: formData.role || null,
+          role: formData.role || "Participant",
           verification_id: verificationId,
         })
         .select()

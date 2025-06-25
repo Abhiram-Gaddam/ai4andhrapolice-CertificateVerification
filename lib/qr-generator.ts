@@ -48,6 +48,7 @@ export const generateHighResQRCode = async (text: string, size = 600): Promise<s
 }
 
 export const getVerificationURL = (verificationId: string): string => {
-  const baseURL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"
+  // Use your deployed Vercel URL
+  const baseURL = process.env.NEXT_PUBLIC_BASE_URL || "https://ai4andhrapolice-certificate-verific.vercel.app"
   return `${baseURL}/verify/${verificationId}`
 }
